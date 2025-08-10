@@ -21,6 +21,7 @@ import { futuristicTheme, gradients, glowEffects } from '@/theme/futuristicTheme
 import FuturisticBackground from '@/components/ui/FuturisticBackground';
 import FuturisticButton from '@/components/ui/FuturisticButton';
 import { ATASUser, ATASChat, ATASMessage } from '@/types';
+import { firebaseService, ActivityType } from '@/services/firebaseService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -222,7 +223,7 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route, user }) => {
     }, 100);
   }, [messages]);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (inputText.trim()) {
       const newMessage: ATASMessage = {
         id: `msg_${Date.now()}`,
@@ -237,12 +238,28 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route, user }) => {
         isEncrypted: true,
       };
 
+      // Add message to local state immediately for instant UI update
       setMessages(prev => [...prev, newMessage]);
       setInputText('');
+
+      try {
+        // Store message in Firestore
+        await firebaseService.storeMessage(newMessage);
+        
+        // Track message activity
+        await firebaseService.trackActivity(ActivityType.MESSAGE_SENT, {
+          chatId: chat.id,
+          messageType: 'text',
+          messageLength: inputText.trim().length,
+        });
+      } catch (error) {
+        console.error('Failed to store message:', error);
+        // Could implement retry logic or show error to user
+      }
     }
   };
 
-  const handleVoiceMessage = () => {
+  const handleVoiceMessage = async () => {
     setIsRecording(!isRecording);
     if (!isRecording) {
       // Start recording
@@ -266,6 +283,20 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route, user }) => {
       };
 
       setMessages(prev => [...prev, voiceMessage]);
+
+      try {
+        // Store voice message in Firestore
+        await firebaseService.storeMessage(voiceMessage);
+        
+        // Track voice message activity
+        await firebaseService.trackActivity(ActivityType.MESSAGE_SENT, {
+          chatId: chat.id,
+          messageType: 'voice',
+          duration: voiceMessage.metadata?.duration,
+        });
+      } catch (error) {
+        console.error('Failed to store voice message:', error);
+      }
     }
   };
 
@@ -288,11 +319,22 @@ const ChatScreen: React.FC<ChatScreenProps> = ({ navigation, route, user }) => {
     }
   };
 
-  const handleCall = (type: 'voice' | 'video') => {
-    Alert.alert(
-      `${type === 'voice' ? 'Voice' : 'Video'} Call`,
-      `Starting ${type} call with ${chat.name}...`
-    );
+  const handleCall = async (type: 'voice' | 'video') => {
+    try {
+      // Track call initiation
+      await firebaseService.trackActivity(ActivityType.CALL_MADE, {
+        chatId: chat.id,
+        callType: type,
+        participantCount: chat.participants.length,
+      });
+
+      Alert.alert(
+        `${type === 'voice' ? 'Voice' : 'Video'} Call`,
+        `Starting ${type} call with ${chat.name}...`
+      );
+    } catch (error) {
+      console.error('Failed to track call activity:', error);
+    }
   };
 
   const handleMessageLongPress = (messageId: string) => {

@@ -76,6 +76,14 @@ ATAS Messenger represents the next evolution in secure communication, designed f
 - **React Native SVG** - Vector graphics and icons
 - **Linear Gradient** - Futuristic visual effects
 
+### **Backend & Database**
+- **Firebase Firestore** - Real-time NoSQL database for messages and user data
+- **Firebase Authentication** - Secure user authentication with Google Sign-in
+- **Firebase Analytics** - User behavior tracking and insights
+- **Firebase Storage** - Encrypted media file storage
+- **Firebase Crashlytics** - Real-time crash reporting
+- **Firebase Realtime Database** - Live presence and typing indicators
+
 ### **Security & Cryptography**
 - **libsodium** - Modern cryptographic library
 - **React Native Sodium** - Native crypto bindings
@@ -91,7 +99,7 @@ ATAS Messenger represents the next evolution in secure communication, designed f
 ### **Additional Features**
 - **Google Sign-in** - Authentication integration
 - **React Native Device Info** - Device fingerprinting
-- **React Native Sound** - Audio playback
+- **React Native Sound** - Audio playbook
 - **React Native FS** - File system access
 - **Lottie React Native** - Advanced animations
 
@@ -129,22 +137,33 @@ npm install
 cd ios && pod install && cd ..
 ```
 
-3. **Configure environment**
+3. **Configure Firebase**
+```bash
+# Android: Place google-services.json in android/app/
+# iOS: Place GoogleService-Info.plist in ios/
+
+# The project is already configured with the provided Firebase config:
+# Project ID: atas-messenger
+# Package Name: com.atas.atasmessenger
+```
+
+4. **Configure environment**
 ```bash
 # Copy environment template
 cp .env.example .env
 
 # Edit .env with your configuration
 # GOOGLE_WEB_CLIENT_ID=your_google_client_id
+# FIREBASE_PROJECT_ID=atas-messenger
 # API_BASE_URL=your_api_url
 ```
 
-4. **Start Metro bundler**
+5. **Start Metro bundler**
 ```bash
 npm start
 ```
 
-5. **Run on device**
+6. **Run on device**
 ```bash
 # For iOS
 npm run ios
@@ -201,19 +220,58 @@ open ios/ATASMessenger.xcworkspace
 
 ```
 1. User Registration:
-   Gmail Auth → ATAS ID Generation → Key Derivation (Argon2id)
+   Gmail Auth → Firebase Auth → ATAS ID Generation → Key Derivation (Argon2id)
    ↓
-   Ed25519 Key Pair → Device Enrollment → Secure Storage
+   Ed25519 Key Pair → Device Enrollment → Secure Storage → Firestore Profile
 
 2. Message Sending:
    Plaintext → XChaCha20-Poly1305 Encryption → Ed25519 Signature
    ↓
-   Upload to Server → Real-time Delivery → Recipient Decryption
+   Upload to Firestore → Real-time Delivery → Recipient Decryption
 
 3. Key Management:
    Per-Chat Keys → Group Key Rotation → Forward Secrecy
    ↓
-   Shamir Secret Sharing → Recovery Options → Backup Storage
+   Shamir Secret Sharing → Recovery Options → Encrypted Backup
+
+4. Activity Tracking:
+   User Actions → Activity Logger → Firebase Analytics
+   ↓
+   Daily Stats → Firestore Storage → Real-time Dashboard
+```
+
+### Firebase Database Schema
+
+```
+📁 Firestore Collections:
+├── users/
+│   ├── {atasId}/
+│   │   ├── profile data
+│   │   ├── encryption keys (public only)
+│   │   ├── device list
+│   │   └── preferences
+├── messages/
+│   ├── {messageId}/
+│   │   ├── encrypted content
+│   │   ├── metadata
+│   │   └── signatures
+├── chats/
+│   ├── {chatId}/
+│   │   ├── participants
+│   │   ├── group info
+│   │   └── last message
+├── userActivity/
+│   ├── {activityId}/
+│   │   ├── activity type
+│   │   ├── timestamp
+│   │   ├── metadata
+│   │   └── device info
+└── dailyStats/
+    ├── {userId}_{date}/
+    │   ├── message counts
+    │   ├── call statistics
+    │   ├── active time
+    │   └── feature usage
 ```
 
 ### ATAS ID Format

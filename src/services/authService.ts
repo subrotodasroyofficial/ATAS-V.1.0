@@ -3,8 +3,10 @@ import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-goo
 import ReactNativeBiometrics from 'react-native-biometrics';
 import Keychain from 'react-native-keychain';
 import DeviceInfo from 'react-native-device-info';
+import auth from '@react-native-firebase/auth';
 import { atasCrypto } from '@/crypto/cryptoCore';
 import { atasIdService, ATASIDData } from './atasIdService';
+import { firebaseService, ActivityType } from './firebaseService';
 import { 
   AuthState, 
   LoginCredentials, 
@@ -137,7 +139,11 @@ export class AuthService {
         return { success: false, error: 'Google authentication failed' };
       }
 
-      // Step 2: Validate Gmail matches registration data
+      // Step 2: Authenticate with Firebase using Google credentials
+      const googleCredential = auth.GoogleAuthProvider.credential(googleUser.idToken);
+      const firebaseUserCredential = await auth().signInWithCredential(googleCredential);
+
+      // Step 3: Validate Gmail matches registration data
       if (googleUser.email !== registrationData.email) {
         return { 
           success: false, 
@@ -145,14 +151,14 @@ export class AuthService {
         };
       }
 
-      // Step 3: Generate ATAS ID
+      // Step 4: Generate ATAS ID
       const atasIdData = await atasIdService.generateATASID(
         registrationData.email,
         registrationData.phoneNumber,
         registrationData.countryCode
       );
 
-      // Step 4: Generate cryptographic keys
+      // Step 5: Generate cryptographic keys
       const salt = await atasCrypto.generateSalt();
       const masterKey = await atasCrypto.deriveUMK(
         registrationData.password,
@@ -161,7 +167,7 @@ export class AuthService {
       );
       const signingKeys = await atasCrypto.generateSigningKeyPair();
 
-      // Step 5: Create device record
+      // Step 6: Create device record
       const deviceFingerprint = await atasIdService.generateDeviceFingerprint();
       const device: ATASDevice = {
         id: deviceFingerprint,
@@ -175,7 +181,7 @@ export class AuthService {
         isTrusted: true,
       };
 
-      // Step 6: Create user record
+      // Step 7: Create user record
       const user: ATASUser = {
         id: atasIdData.id,
         email: registrationData.email,
@@ -188,15 +194,33 @@ export class AuthService {
         lastSeen: new Date(),
         biometricEnabled: false,
         recoveryShares: [], // Will be generated later
+        firebaseUid: firebaseUserCredential.user.uid,
+        createdAt: new Date(),
+        lastLoginAt: new Date(),
+        encryptedPrivateKey: await this.encryptPrivateKey(signingKeys.privateKey, masterKey),
+        devices: [device],
+        isEmailVerified: firebaseUserCredential.user.emailVerified,
       };
 
-      // Step 7: Store encrypted data
+      // Step 8: Store encrypted data locally
       await this.storeUserData(user, device, masterKey, signingKeys);
 
-      // Step 8: Initialize crypto keys
+      // Step 9: Create user profile in Firestore
+      await firebaseService.createUserProfile(user);
+
+      // Step 10: Start user session tracking
+      await firebaseService.startUserSession({
+        platform: await DeviceInfo.getSystemName(),
+        version: await DeviceInfo.getSystemVersion(),
+        model: await DeviceInfo.getModel(),
+        appVersion: await DeviceInfo.getVersion(),
+        deviceId: device.id,
+      });
+
+      // Step 11: Initialize crypto keys
       atasCrypto.initializeKeys(masterKey, signingKeys);
 
-      // Step 9: Update auth state
+      // Step 12: Update auth state
       this.authState = {
         isAuthenticated: true,
         user,
@@ -209,6 +233,7 @@ export class AuthService {
 
       await this.saveAuthState();
 
+      console.log('User registered and synced to Firebase:', user.id);
       return { success: true, data: user };
     } catch (error) {
       console.error('User registration failed:', error);
@@ -252,7 +277,7 @@ export class AuthService {
    */
   async loginUser(credentials: LoginCredentials): Promise<APIResponse<ATASUser>> {
     try {
-      // Step 1: Load user data
+      // Step 1: Load user data locally
       const userData = await AsyncStorage.getItem(this.STORAGE_KEYS.USER_DATA);
       if (!userData) {
         return { success: false, error: 'User not found' };
@@ -277,6 +302,9 @@ export class AuthService {
       if (credentials.biometricData && this.authState.biometricEnabled) {
         // Biometric authentication
         authSuccess = await this.authenticateWithBiometrics();
+        if (authSuccess) {
+          await firebaseService.trackActivity(ActivityType.BIOMETRIC_ENABLED);
+        }
       } else if (credentials.password) {
         // Password authentication
         authSuccess = await this.verifyPassword(credentials.password, user.email);
@@ -288,12 +316,44 @@ export class AuthService {
         return { success: false, error: 'Authentication failed' };
       }
 
-      // Step 5: Load device data and keys
+      // Step 5: Authenticate with Firebase (if user has firebaseUid)
+      if (user.firebaseUid && credentials.password) {
+        try {
+          await auth().signInWithEmailAndPassword(user.email, credentials.password);
+        } catch (firebaseError) {
+          console.log('Firebase auth failed, continuing with local auth');
+        }
+      }
+
+      // Step 6: Load device data and keys
       await this.loadUserKeys(user.email, credentials.password || '');
 
-      // Step 6: Update auth state
+      // Step 7: Sync user profile from Firestore
+      try {
+        const firestoreUser = await firebaseService.getUserProfile(user.id);
+        if (firestoreUser) {
+          // Merge Firestore data with local data
+          Object.assign(user, firestoreUser);
+        }
+      } catch (error) {
+        console.log('Could not sync from Firestore, using local data');
+      }
+
+      // Step 8: Start user session tracking
+      await firebaseService.startUserSession({
+        platform: await DeviceInfo.getSystemName(),
+        version: await DeviceInfo.getSystemVersion(),
+        model: await DeviceInfo.getModel(),
+        appVersion: await DeviceInfo.getVersion(),
+        deviceId: deviceFingerprint,
+      });
+
+      // Step 9: Update auth state
       const deviceData = await AsyncStorage.getItem(this.STORAGE_KEYS.DEVICE_DATA);
       const device: ATASDevice = deviceData ? JSON.parse(deviceData) : null;
+
+      // Update last login time
+      user.lastLoginAt = new Date();
 
       this.authState = {
         isAuthenticated: true,
@@ -307,6 +367,13 @@ export class AuthService {
 
       await this.saveAuthState();
 
+      // Step 10: Update user profile in Firestore
+      await firebaseService.updateUserProfile(user.id, {
+        lastLoginAt: user.lastLoginAt,
+        isOnline: true,
+      });
+
+      console.log('User logged in and synced with Firebase:', user.id);
       return { success: true, data: user };
     } catch (error) {
       console.error('User login failed:', error);
@@ -527,6 +594,19 @@ export class AuthService {
    */
   async logout(): Promise<void> {
     try {
+      // End Firebase session tracking
+      if (this.authState.user) {
+        await firebaseService.updateOnlineStatus(this.authState.user.id, false);
+        await firebaseService.endUserSession();
+      }
+
+      // Sign out from Firebase Auth
+      try {
+        await auth().signOut();
+      } catch (error) {
+        console.log('Firebase signout failed:', error);
+      }
+
       // Clear Google sign-in
       if (await GoogleSignin.isSignedIn()) {
         await GoogleSignin.signOut();
@@ -534,6 +614,9 @@ export class AuthService {
 
       // Clear crypto keys
       atasCrypto.clearKeys();
+
+      // Cleanup Firebase service
+      firebaseService.cleanup();
 
       // Clear auth state
       this.authState = {
