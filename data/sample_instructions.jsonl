@@ -1,0 +1,5 @@
+{"instruction": "Write a haiku about the sea.", "output": "Endless blue whispers\nFoam-kissed shores breathe ancient songs\nGulls stitch sky with wind"}
+{"instruction": "Translate 'Hello' to Spanish.", "output": "Hola"}
+{"instruction": "Explain what Python is in one sentence.", "output": "Python is a high-level, general-purpose programming language known for its readability and vast ecosystem."}
+{"instruction": "List three benefits of unit testing.", "output": "1. Catches regressions early. 2. Documents expected behavior. 3. Enables safe refactoring."}
+{"instruction": "Summarize the benefits of meditation in one short paragraph.", "output": "Meditation reduces stress, improves focus, and enhances emotional resilience by training awareness and calm attention. Regular practice can lead to better sleep, more balanced mood, and a greater sense of clarity in daily life."}
